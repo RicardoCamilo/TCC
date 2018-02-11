@@ -5,6 +5,8 @@
 #include <vector>
 #include <android/log.h>
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <math.h>
 
 using namespace std;
 using namespace cv;
@@ -17,6 +19,7 @@ using namespace cv;
 char const *TAG = "MAINACTIVITY_NATIVE_LOG";
 
 Rect2f fieldRect;
+vector<Vec3f> directions_epuck;
 
 // reference to localize new objects relative to the original image (before crop)
 Point offSetParent(0,0);
@@ -26,14 +29,20 @@ Scalar contourColorBlue = Scalar(0, 0, 255);
 Scalar contourColorRed = Scalar(255, 0, 0);
 Scalar contourColorGreen = Scalar(0, 255, 0);
 Scalar contourColorBlack = Scalar(0, 0, 0);
+Scalar contourColorYellow = Scalar(255, 242, 0);
+Scalar contourColorCiano = Scalar(0, 255, 200);
 Scalar contourColorWhite = Scalar(255, 255, 255);
 
 struct objectsInCell
 {
     size_t gridSize;
     vector<string> objectName;
+    vector<string> objectColor;
+    vector<string> objectDirection;
     vector<int> cellPosition;
 };
+
+
 
 const struct objectsInCell objectsInCellEmptyStruct = { 0 };
 
@@ -41,7 +50,10 @@ struct EPucksData
 {
     vector<int> radius;
     vector<Point> center;
+
 };
+
+
 
 struct MappingObjects
 {
@@ -50,6 +62,7 @@ struct MappingObjects
     vector<Rect2f> foundObstacles;
     vector<Rect2f> createdGrid;
     vector<Rect2f> foundEPucks;
+    vector<Rect2f> foundEPucksDirections;
     objectsInCell stObjectsInCell;
 
 } stMappingObjects;
@@ -91,9 +104,84 @@ extern "C"
                 stEPucksData.center.push_back(center);
                 stEPucksData.radius.push_back(radius);
             }
+
+
         }
 
         return stEPucksData;
+    }
+
+    bool is_In(Point ext, int r_ext, Point in, int r_in)
+    {
+        float dist;
+        dist = pow((pow((ext.x - in.x), 2) + pow((ext.y - (in.y)), 2)), 0.5);
+        if (r_ext > dist && dist != 0) {
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    /***vector<Vec3f> Direction(vector<Vec3f> _circles) {
+        vector<Vec3f> vectors_in_order;
+        vectors_in_order.clear();
+
+        for(size_t i = 0; i < _circles.size(); ++i) {
+            for(size_t j = 0; j < _circles.size(); ++j) {
+                if (is_In(_circles[i], _circles[j])) {
+
+                vectors_in_order.push_back(_circles[i]);
+                vectors_in_order.push_back(_circles[j]);
+
+                }
+            }
+        }
+        return vectors_in_order;
+    }***/
+
+    int average_pixel(Rect roi, Mat _src_hsv){
+        int _sum = 0;
+        uchar hue;
+        Vec3b intensity;
+
+        for(int y = roi.y; y < roi.y + (int) roi.height; y++){
+            for(int x = roi.x; x < roi.x + (int) roi.width; x++)
+            {
+                intensity = _src_hsv.at< Vec3b >(y, x);
+                hue = intensity.val[0];
+                _sum += (unsigned int) hue;
+            }
+        }
+        return (int) ( _sum / (roi.height * roi.width));
+    }
+
+    string what_color(int average){
+        if ( (average >= 0 && average <= 10) || (average >= 170 && average <= 180 ) ) {
+            return "Red";
+        } else if (average > 10 && average <= 45){
+            return  "Yellow";
+        } else if (average > 45 && average <= 80){
+            return "Green";
+        } else if (average > 80 && average <= 115) {
+            return "Ciano";
+        } else if (average > 115 && average <= 150) {
+            return "Blue";
+        }
+    }
+
+    Scalar what_color_for_contour(int average){
+        if ( (average >= 0 && average <= 10) || (average >= 170 && average <= 180 ) ) {
+            return contourColorRed;
+        } else if (average > 10 && average <= 45){
+            return  contourColorYellow;
+        } else if (average > 45 && average <= 80){
+            return contourColorGreen;
+        } else if (average > 80 && average <= 115) {
+            return contourColorCiano;
+        } else if (average > 115 && average <= 150) {
+            return contourColorBlue;
+        }
     }
 
 
@@ -646,25 +734,71 @@ extern "C"
                                                 iHoughCMinRadius, iHoughCMaxRadius);
 
             vector<Rect2f> epucksRect;
+            vector<Rect2f> epucksDirRect;
+
+            Mat hsvtempCrop_2;
+            cvtColor(tempCrop, hsvtempCrop_2, CV_RGB2HSV);
+
 
             for (size_t i = 0; i < stEPucksData.center.size(); i++) {
-                if (stEPucksData.radius[i] >= 0) {
-                    // circle center
-                    circle(tempCrop, stEPucksData.center[i], 3, contourColorRed, -1, 8, 0);
-                    // circle outline
-                    circle(tempCrop, stEPucksData.center[i], stEPucksData.radius[i],
-                           contourColorRed, 2, 8, 0);
+                for (size_t j = 0; j < stEPucksData.center.size(); j++) {
+                    if (stEPucksData.radius[i] >= 0 && is_In(stEPucksData.center[i], stEPucksData.radius[i], stEPucksData.center[j], stEPucksData.radius[j]) && i != j) {
 
-                    // Compute the bounding box
-                    Rect2f bboxEPuck(stEPucksData.center[i].x - stEPucksData.radius[i],
-                                     stEPucksData.center[i].y - stEPucksData.radius[i],
-                                     2 * stEPucksData.radius[i], 2 * stEPucksData.radius[i]);
 
-                    epucksRect.push_back(bboxEPuck);
+                        Rect2f window_rect(stEPucksData.center[i].x - stEPucksData.radius[i],
+                                         stEPucksData.center[i].y - stEPucksData.radius[i],
+                                         2 * stEPucksData.radius[i], 2 * stEPucksData.radius[i]);
+
+                        Scalar contour_for_circle = what_color_for_contour(
+                                average_pixel(window_rect, hsvtempCrop_2));
+
+
+
+
+                        // circle center
+                        circle(tempCrop, stEPucksData.center[i], 3, contourColorRed, -1, 8, 0);
+                        // circle outline
+                        circle(tempCrop, stEPucksData.center[i], stEPucksData.radius[i],
+                               contour_for_circle, 2, 8, 0);
+
+                        // circle center
+                        circle(tempCrop, stEPucksData.center[j], 3, contourColorRed, -1, 8, 0);
+                        // circle outline
+                        circle(tempCrop, stEPucksData.center[j], stEPucksData.radius[j],
+                               contourColorRed, 2, 8, 0);
+
+                        arrowedLine(tempCrop, stEPucksData.center[i], stEPucksData.center[j], contourColorBlue, 2);
+
+                        Rect2f boxEPuckDir(stEPucksData.center[i], stEPucksData.center[j]);
+                        epucksDirRect.push_back(boxEPuckDir);
+                    }
+                }
+
+                // Compute the bounding box
+                Rect2f bboxEPuck(stEPucksData.center[i].x - stEPucksData.radius[i],
+                                 stEPucksData.center[i].y - stEPucksData.radius[i],
+                                 2 * stEPucksData.radius[i], 2 * stEPucksData.radius[i]);
+
+                epucksRect.push_back(bboxEPuck);
+            }
+            // Meu código
+            vector<Rect2f> epucksDir;
+            vector<Rect2f> epucksMaior;
+
+            for (size_t i = 0; i < epucksRect.size(); i++){
+                for (size_t j = 0; j < epucksRect.size(); j++) {
+                    if ((i != j) && epucksRect[i].contains(epucksRect[j].tl())){
+                        epucksMaior.push_back(epucksRect[i]);
+                        epucksDir.push_back(epucksRect[j]);
+
+                    }
                 }
             }
 
-            stMappingObjects.foundEPucks = epucksRect;
+
+            //stMappingObjects.foundEPucks = epucksRect;
+            stMappingObjects.foundEPucks = epucksMaior;
+            stMappingObjects.foundEPucksDirections = epucksDirRect;
 
             if (stMappingObjects.foundEPucks.size() > 0)
             {
@@ -708,6 +842,9 @@ extern "C"
 
             Mat tempCrop = temp(fieldRect);
 
+            Mat hsvtempCrop;
+            cvtColor(tempCrop, hsvtempCrop, CV_RGB2HSV);
+
             // map Goal
             if (stMappingObjects.foundGoal.width != 0)
             {
@@ -729,6 +866,8 @@ extern "C"
                 rectangle(tempCrop, Intersection, contourColorGreen, 3, 8);
 
                 stMappingObjects.stObjectsInCell.objectName.push_back("goal");
+                stMappingObjects.stObjectsInCell.objectColor.push_back("");
+                stMappingObjects.stObjectsInCell.objectDirection.push_back("");
                 stMappingObjects.stObjectsInCell.cellPosition.push_back(idxLargestArea);
 
             }
@@ -759,6 +898,8 @@ extern "C"
                 rectangle(tempCrop, Intersection, contourColorBlue, 3, 8);
 
                 stMappingObjects.stObjectsInCell.objectName.push_back("obstacle");
+                stMappingObjects.stObjectsInCell.objectColor.push_back("");
+                stMappingObjects.stObjectsInCell.objectDirection.push_back("");
                 stMappingObjects.stObjectsInCell.cellPosition.push_back(idxLargestArea);
 
             }
@@ -785,10 +926,36 @@ extern "C"
                 }
 
                 Intersection = stMappingObjects.foundEPucks[i] & stMappingObjects.createdGrid[idxLargestArea];
-                rectangle(tempCrop, Intersection, contourColorGreen, 3, 8);
+                rectangle(tempCrop, stMappingObjects.createdGrid[idxLargestArea], contourColorGreen, 3, 8);
 
-                stMappingObjects.stObjectsInCell.objectName.push_back("epuck");
-                stMappingObjects.stObjectsInCell.cellPosition.push_back(idxLargestArea);
+                /***
+                Point p1, p2;
+                Rect dir;
+
+                for (size_t j = 0; j < directions_epuck.size(); j = j + 2) {
+                    p1 = Point(cvRound(directions_epuck[j][0]), cvRound(directions_epuck[j][1]));
+                    p2 = Point(cvRound(directions_epuck[j + 1][0]), cvRound(directions_epuck[j +1][1]));
+                    if (stMappingObjects.foundEPucks[i].contains(p1)){
+                        dir = Rect(p1, p2);
+                    }
+                }
+                ***/
+
+                std::stringstream ss1;
+                for (size_t i = 0; i < stMappingObjects.foundEPucks.size() ; i++) {
+
+
+                    ss1 << "(" << stMappingObjects.foundEPucksDirections[i].tl().x << "," << stMappingObjects.foundEPucksDirections[i].tl().y
+                        << ")," << "(" << stMappingObjects.foundEPucksDirections[i].br().x << "," << stMappingObjects.foundEPucksDirections[i].br().y << ")";
+
+                    stMappingObjects.stObjectsInCell.objectName.push_back("epuck");
+                    stMappingObjects.stObjectsInCell.objectColor.push_back(what_color(
+                            average_pixel(stMappingObjects.foundEPucks[i], hsvtempCrop)));
+                    stMappingObjects.stObjectsInCell.objectDirection.push_back(ss1.str());
+                    stMappingObjects.stObjectsInCell.cellPosition.push_back(idxLargestArea);
+
+                    ss1.str("");
+                }
             }
 
             // Create a ArrayList<String> to return to Java
@@ -801,8 +968,8 @@ extern "C"
 
             for (size_t i = 0; i < stMappingObjects.stObjectsInCell.cellPosition.size(); i++)
             {
-                ss << stMappingObjects.stObjectsInCell.objectName[i] << ":"
-                   << stMappingObjects.stObjectsInCell.cellPosition[i] << "\n";
+                ss << stMappingObjects.stObjectsInCell.objectName[i] << " " << stMappingObjects.stObjectsInCell.objectColor[i] << " "
+                   << stMappingObjects.stObjectsInCell.objectDirection[i] <<":" << stMappingObjects.stObjectsInCell.cellPosition[i] << "\n";
                 mapVector.push_back(ss.str());
                 ss.str("");
             }
@@ -832,6 +999,73 @@ extern "C"
             return 0;
         }
     }
+
+    /***JNIEXPORT void JNICALL Java_com_example_gleniosp_ocvcmaketccfinal_MainActivity_findDirections
+        (JNIEnv *jniEnv, jclass jClass, jobject dataObject, jlong mRgbaAddr)
+    {
+        if (fieldRect.width > 0)
+        {
+            Mat &temp = *(Mat *) mRgbaAddr;
+
+            int iHoughCMinDistDivider;
+            int iHoughCParam1;
+            int iHoughCParam2;
+            int iHoughCMinRadius;
+            int iHoughCMaxRadius;
+            int threshold_value;
+            int threshold_type;
+            int max_BINARY_value;
+            jclass cls = jniEnv->GetObjectClass(dataObject);
+
+            jmethodID methodId;
+
+            methodId = jniEnv->GetMethodID(cls, "getHoughCMinDistDivider", "()I");
+            iHoughCMinDistDivider = jniEnv->CallIntMethod(dataObject, methodId);
+
+            methodId = jniEnv->GetMethodID(cls, "getHoughCParam1", "()I");
+            iHoughCParam1 = jniEnv->CallIntMethod(dataObject, methodId);
+
+            methodId = jniEnv->GetMethodID(cls, "getHoughCParam2", "()I");
+            iHoughCParam2 = jniEnv->CallIntMethod(dataObject, methodId);
+
+            methodId = jniEnv->GetMethodID(cls, "getHoughCMinRadius", "()I");
+            iHoughCMinRadius = jniEnv->CallIntMethod(dataObject, methodId);
+
+            methodId = jniEnv->GetMethodID(cls, "getHoughCMaxRadius", "()I");
+            iHoughCMaxRadius = jniEnv->CallIntMethod(dataObject, methodId);
+
+            methodId = jniEnv->GetMethodID(cls, "getThresholdValue", "()I");
+            threshold_value = jniEnv->CallIntMethod(dataObject, methodId);
+
+            methodId = jniEnv->GetMethodID(cls, "getThresholdType", "()I");
+            threshold_type = jniEnv->CallIntMethod(dataObject, methodId);
+
+            methodId = jniEnv->GetMethodID(cls, "getMax_BINARY_value", "()I");
+            max_BINARY_value = jniEnv->CallIntMethod(dataObject, methodId);
+
+
+            Mat tempCrop = temp(fieldRect);
+
+            Mat mGray, dst;
+
+
+            cvtColor(tempCrop, mGray, CV_RGB2GRAY);
+
+            // Reduce the noise so we avoid false circle detection
+            GaussianBlur(mGray, mGray, Size(9, 9), 2, 2 );
+
+            threshold(dst, mGray, threshold_value, max_BINARY_value, threshold_type);
+
+            vector<Vec3f> circles;
+
+            /// Apply the Hough Transform to find the circles
+            HoughCircles(dst, circles, CV_HOUGH_GRADIENT, 1, mGray.rows/iHoughCMinDistDivider,
+                         iHoughCParam1, iHoughCParam2, iHoughCMinRadius, iHoughCMaxRadius);
+
+            directions_epuck = Direction(circles);
+
+        }
+    }***/
 }
 
 
