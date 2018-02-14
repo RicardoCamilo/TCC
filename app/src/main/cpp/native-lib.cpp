@@ -157,29 +157,29 @@ extern "C"
     }
 
     string what_color(int average){
-        if ( (average >= 0 && average <= 10) || (average >= 170 && average <= 180 ) ) {
+        if ( (average >= 0 && average <= 20) || (average >= 131 && average <= 180 ) ) {
             return "Red";
-        } else if (average > 10 && average <= 45){
+        } else if (average > 20 && average <= 45){
             return  "Yellow";
-        } else if (average > 45 && average <= 80){
+        } else if (average > 45 && average <= 70){
             return "Green";
-        } else if (average > 80 && average <= 115) {
+        } else if (average > 70 && average <= 90) {
             return "Ciano";
-        } else if (average > 115 && average <= 150) {
+        } else if (average > 90 && average <= 130) {
             return "Blue";
         }
     }
 
     Scalar what_color_for_contour(int average){
-        if ( (average >= 0 && average <= 10) || (average >= 170 && average <= 180 ) ) {
+        if ( (average >= 0 && average <= 20) || (average >= 131 && average <= 180 ) ) {
             return contourColorRed;
-        } else if (average > 10 && average <= 45){
+        } else if (average > 20 && average <= 45){
             return  contourColorYellow;
-        } else if (average > 45 && average <= 80){
+        } else if (average > 45 && average <= 70){
             return contourColorGreen;
-        } else if (average > 80 && average <= 115) {
+        } else if (average > 70 && average <= 90) {
             return contourColorCiano;
-        } else if (average > 115 && average <= 150) {
+        } else if (average > 90 && average <= 130) {
             return contourColorBlue;
         }
     }
@@ -771,6 +771,21 @@ extern "C"
 
                         Rect2f boxEPuckDir(stEPucksData.center[i], stEPucksData.center[j]);
                         epucksDirRect.push_back(boxEPuckDir);
+                    } else if (stEPucksData.radius[i] >= 0) {
+
+                        Rect2f window_rect(stEPucksData.center[i].x - stEPucksData.radius[i],
+                                           stEPucksData.center[i].y - stEPucksData.radius[i],
+                                           2 * stEPucksData.radius[i], 2 * stEPucksData.radius[i]);
+
+                        Scalar contour_for_circle = what_color_for_contour(
+                                average_pixel(window_rect, hsvtempCrop_2));
+
+                        // circle center
+                        circle(tempCrop, stEPucksData.center[i], 3, contourColorRed, -1, 8, 0);
+                        // circle outline
+                        circle(tempCrop, stEPucksData.center[i], stEPucksData.radius[i],
+                               contour_for_circle, 2, 8, 0);
+
                     }
                 }
 
